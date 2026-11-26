@@ -2,6 +2,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import nbformat as nbf
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
@@ -112,6 +113,106 @@ def calculate_metrics(y_true, y_pred):
     }
 
 
+def create_eda_visualizations(data):
+    """학습 자료의 수치형 변수 분포와 상관계수 히트맵을 저장합니다."""
+    columns = [
+        "target_next_pm10",
+        "lag1_pm10",
+        "lag24_pm10",
+        "rolling24_pm10",
+        "precipitation",
+        "wind_speed",
+    ]
+    correlation = data[columns].corr()
+    labels = [
+        "Next PM10",
+        "Lag 1 PM10",
+        "Lag 24 PM10",
+        "Rolling 24 PM10",
+        "Precipitation",
+        "Wind speed",
+    ]
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    image = ax.imshow(correlation, cmap="RdBu_r", vmin=-1, vmax=1)
+    ax.set_xticks(range(len(labels)), labels=labels, rotation=35, ha="right")
+    ax.set_yticks(range(len(labels)), labels=labels)
+    for row in range(len(labels)):
+        for column in range(len(labels)):
+            ax.text(
+                column,
+                row,
+                f"{correlation.iloc[row, column]:.2f}",
+                ha="center",
+                va="center",
+                color="black",
+                fontsize=9,
+            )
+    ax.set_title("2023 Training Data: Pearson Correlation")
+    fig.colorbar(image, ax=ax, label="Pearson correlation")
+    fig.tight_layout()
+    fig.savefig(IMAGE_DIR / "correlation_heatmap.png", dpi=150)
+    plt.close(fig)
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+    distributions = [
+        ("target_next_pm10", "Next-hour PM10 (ug/m3)", False),
+        ("lag1_pm10", "Previous-hour PM10 (ug/m3)", False),
+        ("precipitation", "log(1 + precipitation [mm])", True),
+        ("wind_speed", "Wind speed (m/s)", False),
+    ]
+    for ax, (column, label, log_transform) in zip(axes.flat, distributions):
+        values = np.log1p(data[column]) if log_transform else data[column]
+        ax.hist(values, bins=40, color="#3B82A0", edgecolor="white")
+        ax.set_title(column.replace("_", " ").title())
+        ax.set_xlabel(label)
+        ax.set_ylabel("Observations")
+        ax.grid(axis="y", alpha=0.25)
+    fig.suptitle("2023 Training Data: Variable Distributions")
+    fig.tight_layout()
+    fig.savefig(IMAGE_DIR / "eda_distribution.png", dpi=150)
+    plt.close(fig)
+
+
+def create_actual_vs_predicted_plot(actual, predicted):
+    """실제값과 Extra Trees 예측값을 비교하는 회귀 산점도를 저장합니다."""
+    actual = pd.Series(actual)
+    predicted = pd.Series(predicted, index=actual.index)
+    lower = min(actual.min(), predicted.min())
+    upper = max(actual.max(), predicted.max())
+
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.scatter(
+        actual,
+        predicted,
+        s=8,
+        alpha=0.15,
+        color="#3B82A0",
+        edgecolors="none",
+        rasterized=True,
+    )
+    ax.plot(
+        [lower, upper],
+        [lower, upper],
+        linestyle="--",
+        color="#C43C39",
+        label="Ideal prediction",
+    )
+    ax.set(
+        title="Actual vs Predicted PM10 (Extra Trees, 2024)",
+        xlabel="Actual PM10 (ug/m3)",
+        ylabel="Predicted PM10 (ug/m3)",
+        xlim=(lower, upper),
+        ylim=(lower, upper),
+    )
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(alpha=0.25)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(IMAGE_DIR / "actual_vs_predicted.png", dpi=150)
+    plt.close(fig)
+
+
 def make_notebook():
     """분석 절차를 설명하는 Jupyter 노트북 파일을 생성합니다."""
     # 노트북에서 사용할 Python 커널 정보를 설정합니다.
@@ -216,7 +317,50 @@ def make_notebook():
             "# 전처리 결과를 행·열 개수로 확인합니다.\n"
             "print('train:', train.shape, 'test:', test.shape)"
         ),
-        nbf.v4.new_markdown_cell("## 2. 모델링\n\n2023년으로 학습하고 2024년으로 평가해 연도 간 일반화 성능을 확인합니다."),
+        nbf.v4.new_markdown_cell(
+            "## 2. 탐색적 데이터 분석 (EDA)\n\n"
+            "모델 학습에 사용하는 2023년 자료의 주요 변수 분포와 Pearson 상관관계를 확인합니다. "
+            "관측소 코드·시간 변수는 식별자 또는 주기형 변수이므로 상관계수에서 제외하고, "
+            "풍향은 원형 변수라 선형 상관계수에 포함하지 않습니다."
+        ),
+        nbf.v4.new_code_cell(
+            "# 타깃과 연속형 입력 변수의 기술통계량을 확인합니다.\n"
+            "eda_columns = ['target_next_pm10', 'lag1_pm10', 'lag24_pm10', 'rolling24_pm10', 'precipitation', 'wind_speed']\n"
+            "train[eda_columns].describe().T[['mean', 'std', 'min', '50%', 'max']].round(3)\n"
+            "\n"
+            "# 분석 결과를 README에서 사용할 이미지 파일로 저장합니다.\n"
+            "import numpy as np\n"
+            "correlation = train[eda_columns].corr()\n"
+            "labels = ['Next PM10', 'Lag 1 PM10', 'Lag 24 PM10', 'Rolling 24 PM10', 'Precipitation', 'Wind speed']\n"
+            "fig, ax = plt.subplots(figsize=(9, 7))\n"
+            "image = ax.imshow(correlation, cmap='RdBu_r', vmin=-1, vmax=1)\n"
+            "ax.set_xticks(range(len(labels)), labels=labels, rotation=35, ha='right')\n"
+            "ax.set_yticks(range(len(labels)), labels=labels)\n"
+            "for row in range(len(labels)):\n"
+            "    for column in range(len(labels)):\n"
+            "        ax.text(column, row, f'{correlation.iloc[row, column]:.2f}', ha='center', va='center', fontsize=9)\n"
+            "ax.set_title('2023 Training Data: Pearson Correlation')\n"
+            "fig.colorbar(image, ax=ax, label='Pearson correlation')\n"
+            "fig.tight_layout()\n"
+            "fig.savefig(IMAGE_DIR / 'correlation_heatmap.png', dpi=150)\n"
+            "plt.show()\n"
+            "\n"
+            "# 편중된 강수량 분포는 log(1+x) 변환해 나머지 분포와 비교합니다.\n"
+            "fig, axes = plt.subplots(2, 2, figsize=(11, 8))\n"
+            "distributions = [('target_next_pm10', 'Next-hour PM10 (ug/m3)', False), ('lag1_pm10', 'Previous-hour PM10 (ug/m3)', False), ('precipitation', 'log(1 + precipitation [mm])', True), ('wind_speed', 'Wind speed (m/s)', False)]\n"
+            "for ax, (column, label, log_transform) in zip(axes.flat, distributions):\n"
+            "    values = np.log1p(train[column]) if log_transform else train[column]\n"
+            "    ax.hist(values, bins=40, color='#3B82A0', edgecolor='white')\n"
+            "    ax.set_title(column.replace('_', ' ').title())\n"
+            "    ax.set_xlabel(label)\n"
+            "    ax.set_ylabel('Observations')\n"
+            "    ax.grid(axis='y', alpha=0.25)\n"
+            "fig.suptitle('2023 Training Data: Variable Distributions')\n"
+            "fig.tight_layout()\n"
+            "fig.savefig(IMAGE_DIR / 'eda_distribution.png', dpi=150)\n"
+            "plt.show()"
+        ),
+        nbf.v4.new_markdown_cell("## 3. 모델링\n\n2023년으로 학습하고 2024년으로 평가해 연도 간 일반화 성능을 확인합니다."),
         nbf.v4.new_code_cell(
             "# 모델 학습에 사용할 입력 변수와 예측할 정답 변수를 지정합니다.\n"
             "features = ['station_code','lag1_pm10','lag24_pm10','rolling24_pm10','precipitation','wind_speed','wind_direction','hour','month','dayofweek']\n"
@@ -244,7 +388,7 @@ def make_notebook():
             "    }\n"
             "pd.DataFrame(results).T"
         ),
-        nbf.v4.new_markdown_cell("## 3. 성능 시각화"),
+        nbf.v4.new_markdown_cell("## 4. 성능 시각화"),
         nbf.v4.new_code_cell(
             "# RMSE가 낮은 모델부터 정렬해 성능을 막대그래프로 비교합니다.\n"
             "result_df = pd.DataFrame(results).T.sort_values('RMSE')\n"
@@ -256,7 +400,35 @@ def make_notebook():
             "plt.show()\n"
             "result_df"
         ),
-        nbf.v4.new_markdown_cell("## 4. 특성 중요도"),
+        nbf.v4.new_code_cell(
+            "# 최종 선택한 Extra Trees 모델로 테스트 데이터의 PM10 예측값을 계산합니다.\n"
+            "extra_trees_pred = models['Extra Trees'].predict(X_test)\n"
+            "# 실제값과 예측값 중 작은 값을 두 축의 공통 최솟값으로 정합니다.\n"
+            "lower = min(y_test.min(), extra_trees_pred.min())\n"
+            "# 실제값과 예측값 중 큰 값을 두 축의 공통 최댓값으로 정합니다.\n"
+            "upper = max(y_test.max(), extra_trees_pred.max())\n"
+            "# 8x8인 그림과 그래프 축 객체를 만듭니다.\n"
+            "fig, ax = plt.subplots(figsize=(8, 8))\n"
+            "# 실제값을 x축, 예측값을 y축에 그리고 점을 작고 투명하게 표시합니다.\n"
+            "ax.scatter(y_test, extra_trees_pred, s=8, alpha=0.15, color='#3B82A0', edgecolors='none', rasterized=True)\n"
+            "# 예측이 실제값과 같은 y=x 기준선을 빨간 점선으로 표시합니다.\n"
+            "ax.plot([lower, upper], [lower, upper], linestyle='--', color='#C43C39', label='Ideal prediction')\n"
+            "# 그래프 제목, 축 이름, 두 축의 동일한 표시 범위를 지정합니다.\n"
+            "ax.set(title='Actual vs Predicted PM10 (Extra Trees, 2024)', xlabel='Actual PM10 (ug/m3)', ylabel='Predicted PM10 (ug/m3)', xlim=(lower, upper), ylim=(lower, upper))\n"
+            "# x축과 y축의 단위 길이를 같게 해 기준선 비교가 왜곡되지 않게 합니다.\n"
+            "ax.set_aspect('equal', adjustable='box')\n"
+            "# 점의 위치를 읽기 쉽도록 격자선을 표시합니다.\n"
+            "ax.grid(alpha=0.25)\n"
+            "# 기준선 설명을 그래프 범례에 표시합니다.\n"
+            "ax.legend()\n"
+            "# 제목이나 축 이름이 잘리지 않도록 여백을 자동 조정합니다.\n"
+            "fig.tight_layout()\n"
+            "# 그래프를 README에서 연결할 PNG 파일로 저장합니다.\n"
+            "fig.savefig(IMAGE_DIR / 'actual_vs_predicted.png', dpi=150)\n"
+            "# 노트북 출력에 그래프를 표시합니다.\n"
+            "plt.show()"
+        ),
+        nbf.v4.new_markdown_cell("## 5. 특성 중요도"),
         nbf.v4.new_code_cell(
             "# Random Forest가 계산한 특성 중요도를 내림차순으로 정리합니다.\n"
             "tree_model = models['Random Forest']\n"
@@ -284,6 +456,24 @@ def main():
     # 2023년 자료로 학습하고 2024년 자료로 성능을 평가합니다.
     train = load_hourly_data(2023)
     test = load_hourly_data(2024)
+    create_eda_visualizations(train)
+
+    eda_columns = [
+        "target_next_pm10",
+        "lag1_pm10",
+        "lag24_pm10",
+        "rolling24_pm10",
+        "precipitation",
+        "wind_speed",
+    ]
+    print("2023 EDA summary:")
+    print(
+        train[eda_columns]
+        .describe()
+        .T[["mean", "std", "min", "50%", "max"]]
+        .round(3)
+        .to_string()
+    )
 
     # 예측에 사용할 입력 변수 목록과 다음 시간 PM10 정답을 분리합니다.
     features = [
@@ -364,6 +554,12 @@ def main():
     plt.tight_layout()
     plt.savefig(IMAGE_DIR / "feature_importance.png", dpi=150)
     plt.close()
+
+    # 최종 선택 모델인 Extra Trees의 실제값과 예측값을 산점도로 저장합니다.
+    create_actual_vs_predicted_plot(
+        y_test,
+        predictions["Extra Trees"],
+    )
 
     # 분석에 사용된 행 수와 모델별 성능을 화면에 요약합니다.
     print("train rows:", len(train))
